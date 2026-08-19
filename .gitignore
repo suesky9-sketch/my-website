@@ -1,0 +1,11 @@
+__pycache__/
+node_modules/
+.netlify/
+
+*.xlsx
+*.xls
+~$*.xlsx
+~$*.xls
+
+.DS_Store
+Thumbs.db
