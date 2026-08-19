@@ -245,7 +245,13 @@
 
     <script src="./data.js"></script>
     <script src="./assets/vendor/echarts.min.js"></script>
+    <script>
+      window.echarts || document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"><\/script>');
+    </script>
     <script src="./assets/vendor/world.js"></script>
+    <script>
+      window.echarts && window.echarts.getMap && window.echarts.getMap("world") || document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/js/world.js"><\/script>');
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
       window.XLSX || document.write('<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"><\/script>');
