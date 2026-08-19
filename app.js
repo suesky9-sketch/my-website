@@ -2,6 +2,7 @@ let rawData = window.PACKAGING_DATA || { items: [], sourceFile: "数据表" };
 let allItems = rawData.items || [];
 let worldMapChart = null;
 let worldMapZoom = 1.08;
+let uploadedImageObjectUrls = [];
 const countryPositions = {
   中国: [73, 47],
   日本: [82, 48],
@@ -120,12 +121,17 @@ function imageList(value) {
 }
 
 function isImagePath(value) {
-  return typeof value === "string" && (/^data:image\//i.test(value) || /\.(png|jpe?g|gif|webp|bmp)(\?.*)?$/i.test(value));
+  return typeof value === "string" && (/^(data:image\/|blob:)/i.test(value) || /\.(png|jpe?g|gif|webp|bmp)(\?.*)?$/i.test(value));
+}
+
+function imageSrc(value) {
+  if (!value) return "";
+  return window.PACKAGING_IMAGE_DATA?.[value] || value;
 }
 
 function imageBox(src, alt, className) {
   if (!src) return `<div class="${className}">${escapeHtml(alt || "产品图")}</div>`;
-  return `<div class="${className} has-image"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt || "产品图")}" loading="lazy"></div>`;
+  return `<div class="${className} has-image"><img src="${escapeHtml(imageSrc(src))}" alt="${escapeHtml(alt || "产品图")}" loading="lazy"></div>`;
 }
 
 function detailValue(value) {
@@ -133,7 +139,7 @@ function detailValue(value) {
   const images = values.filter(isImagePath);
   const texts = values.filter((entry) => !isImagePath(entry));
   const imageHtml = images.length
-    ? `<div class="image-strip">${images.map((src, index) => `<button class="image-thumb preview-trigger" type="button" ${previewAttrs(images, index)}><img src="${escapeHtml(src)}" alt="产品图片" loading="lazy"></button>`).join("")}</div>`
+    ? `<div class="image-strip">${images.map((src, index) => `<button class="image-thumb preview-trigger" type="button" ${previewAttrs(images, index)}><img src="${escapeHtml(imageSrc(src))}" alt="产品图片" loading="lazy"></button>`).join("")}</div>`
     : "";
   const textHtml = texts.length ? escapeHtml(texts.join("、")) : "";
   return imageHtml + (textHtml || (!imageHtml ? "未记录" : ""));
@@ -151,14 +157,14 @@ function detailGallery(item) {
   const thumbs = images.length > 1
     ? `<div class="detail-thumbs" aria-label="产品图片缩略图">${images.map((src, index) => `
         <button class="detail-thumb ${index === activeIndex ? "active" : ""}" type="button" data-detail-thumb="${index}" aria-label="查看第 ${index + 1} 张产品图">
-          <img src="${escapeHtml(src)}" alt="产品图 ${index + 1}" loading="lazy">
+          <img src="${escapeHtml(imageSrc(src))}" alt="产品图 ${index + 1}" loading="lazy">
         </button>
       `).join("")}</div>`
     : "";
   return `
     <div class="detail-gallery">
       <button class="detail-image has-image preview-trigger" type="button" ${previewAttrs(images, activeIndex)} aria-label="放大查看产品图">
-        <img src="${escapeHtml(activeImage)}" alt="${escapeHtml(item.name || item.type)}" loading="lazy">
+        <img src="${escapeHtml(imageSrc(activeImage))}" alt="${escapeHtml(item.name || item.type)}" loading="lazy">
       </button>
       ${thumbs}
     </div>
@@ -197,8 +203,21 @@ function uniqueUploadValues(values) {
   });
 }
 
-function uploadImages(row, indexes) {
-  return uniqueUploadValues(indexes.map((index) => uploadCell(row, index))).filter(isImagePath);
+function uploadImageMapKey(sheetIndex, excelRow, excelCol) {
+  return `${sheetIndex}:${excelRow}:${excelCol}`;
+}
+
+function uploadEmbeddedImages(imageMap, sheetIndex, itemIndex, indexes) {
+  if (!imageMap) return [];
+  const excelRow = itemIndex + 3;
+  return indexes.flatMap((index) => imageMap.get(uploadImageMapKey(sheetIndex, excelRow, index + 1)) || []);
+}
+
+function uploadImages(row, indexes, imageMap, sheetIndex, itemIndex) {
+  return uniqueUploadValues([
+    ...uploadEmbeddedImages(imageMap, sheetIndex, itemIndex, indexes),
+    ...indexes.map((index) => uploadCell(row, index)),
+  ]).filter(isImagePath);
 }
 
 function uploadSheetRows(workbook, sheetIndex) {
@@ -212,11 +231,11 @@ function uploadSheetRows(workbook, sheetIndex) {
   }).slice(2).filter((row) => row.some((cell) => cleanUploadCell(cell)));
 }
 
-function buildCupUploadItem(row, index) {
-  const productImages = uploadImages(row, [4, 5, 6, 7]);
-  const bottomImages = uploadImages(row, [22]);
-  const lidImages = uploadImages(row, [23]);
-  const specialImages = uploadImages(row, [34, 35]);
+function buildCupUploadItem(row, index, imageMap) {
+  const productImages = uploadImages(row, [4, 5, 6, 7], imageMap, 0, index);
+  const bottomImages = uploadImages(row, [22], imageMap, 0, index);
+  const lidImages = uploadImages(row, [23], imageMap, 0, index);
+  const specialImages = uploadImages(row, [34, 35], imageMap, 0, index);
   return {
     id: `cup-upload-${index + 1}`,
     type: "杯类",
@@ -275,10 +294,10 @@ function buildCupUploadItem(row, index) {
   };
 }
 
-function buildBottleUploadItem(row, index) {
-  const productImages = uploadImages(row, [4, 5]);
-  const bottomImages = uploadImages(row, [13, 14]);
-  const specialImages = uploadImages(row, [24, 25]);
+function buildBottleUploadItem(row, index, imageMap) {
+  const productImages = uploadImages(row, [4, 5], imageMap, 1, index);
+  const bottomImages = uploadImages(row, [13, 14], imageMap, 1, index);
+  const specialImages = uploadImages(row, [24, 25], imageMap, 1, index);
   const material = uploadCell(row, 19);
   const label = uploadCell(row, 20);
   const surface = uploadCell(row, 21);
@@ -363,9 +382,136 @@ function mergeExistingImages(nextItems, previousItems) {
   return nextItems;
 }
 
-function buildUploadData(workbook, sourceFile, previousItems) {
-  const cupItems = uploadSheetRows(workbook, 0).map(buildCupUploadItem).filter((item) => item.market || item.brand || item.name);
-  const bottleItems = uploadSheetRows(workbook, 1).map(buildBottleUploadItem).filter((item) => item.market || item.brand || item.name);
+function xmlNodesByLocalName(root, localName) {
+  return Array.from(root.getElementsByTagName("*")).filter((node) => node.localName === localName);
+}
+
+function xmlFirstText(root, localName) {
+  const node = xmlNodesByLocalName(root, localName)[0];
+  return node ? node.textContent : "";
+}
+
+function parseXml(text) {
+  return new DOMParser().parseFromString(text, "application/xml");
+}
+
+function zipResolvePath(basePath, target) {
+  if (!target) return "";
+  if (/^\//.test(target)) return target.replace(/^\/+/, "");
+  const parts = basePath.split("/");
+  parts.pop();
+  target.split("/").forEach((part) => {
+    if (!part || part === ".") return;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  });
+  return parts.join("/");
+}
+
+function relsPathFor(partPath) {
+  const parts = partPath.split("/");
+  const file = parts.pop();
+  return `${parts.join("/")}/_rels/${file}.rels`;
+}
+
+function parseRelsXml(xmlText) {
+  const rels = new Map();
+  const doc = parseXml(xmlText);
+  xmlNodesByLocalName(doc, "Relationship").forEach((node) => {
+    rels.set(node.getAttribute("Id"), node.getAttribute("Target"));
+  });
+  return rels;
+}
+
+function mimeFromPath(path) {
+  if (/\.jpe?g$/i.test(path)) return "image/jpeg";
+  if (/\.gif$/i.test(path)) return "image/gif";
+  if (/\.webp$/i.test(path)) return "image/webp";
+  if (/\.bmp$/i.test(path)) return "image/bmp";
+  return "image/png";
+}
+
+async function zipText(zip, path) {
+  const file = zip.file(path);
+  return file ? file.async("text") : "";
+}
+
+async function zipImageObjectUrl(zip, path) {
+  const file = zip.file(path);
+  if (!file) return "";
+  const buffer = await file.async("arraybuffer");
+  return URL.createObjectURL(new Blob([buffer], { type: mimeFromPath(path) }));
+}
+
+async function extractWorkbookImages(buffer, workbook) {
+  if (!window.JSZip || !window.DOMParser) return { imageMap: new Map(), objectUrls: [] };
+  const zip = await JSZip.loadAsync(buffer);
+  const workbookRelsText = await zipText(zip, "xl/_rels/workbook.xml.rels");
+  const workbookXmlText = await zipText(zip, "xl/workbook.xml");
+  if (!workbookRelsText || !workbookXmlText) return { imageMap: new Map(), objectUrls: [] };
+  const workbookRels = parseRelsXml(workbookRelsText);
+  const workbookDoc = parseXml(workbookXmlText);
+  const imageMap = new Map();
+  const objectUrls = [];
+
+  for (const sheetNode of xmlNodesByLocalName(workbookDoc, "sheet")) {
+    const sheetName = sheetNode.getAttribute("name");
+    const sheetIndex = workbook.SheetNames.indexOf(sheetName);
+    if (sheetIndex < 0) continue;
+    const relId = sheetNode.getAttribute("r:id") || sheetNode.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+    const sheetTarget = workbookRels.get(relId);
+    const sheetPath = zipResolvePath("xl/workbook.xml", sheetTarget);
+    const sheetXmlText = await zipText(zip, sheetPath);
+    const sheetRelsText = await zipText(zip, relsPathFor(sheetPath));
+    if (!sheetXmlText || !sheetRelsText) continue;
+    const sheetDoc = parseXml(sheetXmlText);
+    const sheetRels = parseRelsXml(sheetRelsText);
+    const drawingRelId = xmlNodesByLocalName(sheetDoc, "drawing")[0]?.getAttribute("r:id")
+      || xmlNodesByLocalName(sheetDoc, "drawing")[0]?.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+    const drawingTarget = sheetRels.get(drawingRelId);
+    if (!drawingTarget) continue;
+    const drawingPath = zipResolvePath(sheetPath, drawingTarget);
+    const drawingXmlText = await zipText(zip, drawingPath);
+    const drawingRelsText = await zipText(zip, relsPathFor(drawingPath));
+    if (!drawingXmlText || !drawingRelsText) continue;
+    const drawingDoc = parseXml(drawingXmlText);
+    const drawingRels = parseRelsXml(drawingRelsText);
+    const anchors = [
+      ...xmlNodesByLocalName(drawingDoc, "twoCellAnchor"),
+      ...xmlNodesByLocalName(drawingDoc, "oneCellAnchor"),
+    ];
+
+    for (const anchor of anchors) {
+      const from = xmlNodesByLocalName(anchor, "from")[0];
+      const blip = xmlNodesByLocalName(anchor, "blip")[0];
+      if (!from || !blip) continue;
+      const row = Number(xmlFirstText(from, "row"));
+      const col = Number(xmlFirstText(from, "col"));
+      if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+      const embedId = blip.getAttribute("r:embed") || blip.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "embed");
+      const mediaTarget = drawingRels.get(embedId);
+      if (!mediaTarget) continue;
+      const mediaPath = zipResolvePath(drawingPath, mediaTarget);
+      const url = await zipImageObjectUrl(zip, mediaPath);
+      if (!url) continue;
+      objectUrls.push(url);
+      const key = uploadImageMapKey(sheetIndex, row + 1, col + 1);
+      if (!imageMap.has(key)) imageMap.set(key, []);
+      imageMap.get(key).push(url);
+    }
+  }
+
+  return { imageMap, objectUrls };
+}
+
+function disposeUploadedImageUrls(urls = uploadedImageObjectUrls) {
+  urls.forEach((url) => URL.revokeObjectURL(url));
+  if (urls === uploadedImageObjectUrls) uploadedImageObjectUrls = [];
+}
+
+function buildUploadData(workbook, sourceFile, previousItems, imageMap) {
+  const cupItems = uploadSheetRows(workbook, 0).map((row, index) => buildCupUploadItem(row, index, imageMap)).filter((item) => item.market || item.brand || item.name);
+  const bottleItems = uploadSheetRows(workbook, 1).map((row, index) => buildBottleUploadItem(row, index, imageMap)).filter((item) => item.market || item.brand || item.name);
   return {
     sourceFile,
     generatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -415,14 +561,20 @@ async function handleWorkbookUpload(event) {
   const sourceLabel = $("#sourceFile");
   const previousLabel = sourceLabel.textContent;
   sourceLabel.textContent = `正在读取：${file.name}`;
+  let extractedImages = { imageMap: new Map(), objectUrls: [] };
   try {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-    const data = buildUploadData(workbook, file.name, allItems);
+    sourceLabel.textContent = `正在读取图片：${file.name}`;
+    extractedImages = await extractWorkbookImages(buffer, workbook);
+    const data = buildUploadData(workbook, file.name, allItems, extractedImages.imageMap);
     if (!data.items.length) throw new Error("未在数据表前两个工作表中识别到竞品记录");
+    disposeUploadedImageUrls();
+    uploadedImageObjectUrls = extractedImages.objectUrls;
     applyUploadedWorkbook(data);
-    alert(`已在当前页面替换为 ${file.name}，共读取 ${data.items.length} 条竞品数据。`);
+    alert(`已在当前页面替换为 ${file.name}，共读取 ${data.items.length} 条竞品数据，提取 ${extractedImages.objectUrls.length} 张内嵌图片。`);
   } catch (error) {
+    disposeUploadedImageUrls(extractedImages.objectUrls);
     sourceLabel.textContent = previousLabel;
     alert(`数据表读取失败：${error.message || error}`);
   }
@@ -837,7 +989,7 @@ function mediaCard(title, value) {
   const images = values.filter(isImagePath);
   const texts = values.filter((entry) => !isImagePath(entry));
   const imageHtml = images.length
-    ? `<div class="image-strip media-strip">${images.map((src, index) => `<button class="image-thumb preview-trigger" type="button" ${previewAttrs(images, index)}><img src="${escapeHtml(src)}" alt="${escapeHtml(title)}" loading="lazy"></button>`).join("")}</div>`
+    ? `<div class="image-strip media-strip">${images.map((src, index) => `<button class="image-thumb preview-trigger" type="button" ${previewAttrs(images, index)}><img src="${escapeHtml(imageSrc(src))}" alt="${escapeHtml(title)}" loading="lazy"></button>`).join("")}</div>`
     : "";
   const textHtml = texts.length ? `<div class="media-text">${escapeHtml(texts.join("、"))}</div>` : "";
   return `<article class="detail-card media-card"><h3>${title}</h3>${imageHtml}${textHtml || (!imageHtml ? '<div class="media-text">未记录</div>' : "")}</article>`;
@@ -1985,7 +2137,7 @@ function recommendReferenceRows(items) {
     return `
       <article class="reference-row reference-card" data-rec-detail="${escapeHtml(item.id)}" tabindex="0">
         <div class="reference-image${image ? " has-image" : ""}">
-          ${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.name || "产品图")}" loading="lazy">` : "产品图"}
+          ${image ? `<img src="${escapeHtml(imageSrc(image))}" alt="${escapeHtml(item.name || "产品图")}" loading="lazy">` : "产品图"}
         </div>
         <div class="reference-card-main">
           <h4>${escapeHtml(item.name || "未命名产品")}</h4>
@@ -2259,7 +2411,7 @@ function tableText(value) {
 function tableCell(value) {
   const images = imageList(value);
   if (images.length) {
-    return `<div class="table-images">${images.map((src, index) => `<button class="table-image preview-trigger" type="button" ${previewAttrs(images, index)}><img src="${escapeHtml(src)}" alt="表格图片" loading="lazy"></button>`).join("")}</div>`;
+    return `<div class="table-images">${images.map((src, index) => `<button class="table-image preview-trigger" type="button" ${previewAttrs(images, index)}><img src="${escapeHtml(imageSrc(src))}" alt="表格图片" loading="lazy"></button>`).join("")}</div>`;
   }
   return escapeHtml(compactText(value));
 }
@@ -2320,7 +2472,7 @@ function closePreview() {
 function renderPreview() {
   const { images, index, zoom } = state.preview;
   const image = images[index];
-  $("#previewImage").src = image || "";
+  $("#previewImage").src = imageSrc(image) || "";
   $("#previewImage").alt = `放大查看图片 ${index + 1}`;
   $("#previewImage").style.transform = `scale(${zoom})`;
   $("#previewCounter").textContent = `${index + 1} / ${images.length}`;
